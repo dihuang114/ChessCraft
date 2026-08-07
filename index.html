@@ -355,13 +355,14 @@
       <div class="ptools">
         <input type="text" id="rulesName" value="我的变体" placeholder="规则名称">
         <select id="preset" title="预设"></select>
+        <button id="btnDelPreset" style="display:none" title="删除选中的「我的预设」（内置预设不可删除）">删除预设</button>
         <button id="btnExport">保存并导出预设</button>
         <button id="btnStandalone">导出独立版</button>
         <button id="btnImport">导入预设</button>
         <button id="btnSelftest">运行自检</button>
         <input type="file" id="fileImport" accept=".json,application/json" style="display:none">
       </div>
-      <p class="note">预设列表查看 preset 文件夹</p>
+      <p class="note" id="presetNote">预设列表查看 preset 文件夹</p>
     </details>
 
     <details class="panel" open>
@@ -3656,13 +3657,69 @@ function applyBoardChange() {
   toast('棋盘已改为 ' + rows + '×' + cols + '，已重建摆法并开新局');
 }
 
-var SERVER = location.protocol === 'http:' || location.protocol === 'https:';
+var SERVER = false;   // 服务探测完成后才为 true（本地 Node 服务可用时）
+// 启动时探测本地服务：成功且返回 {ok:true} 视为服务模式，否则按静态托管模式运行（GitHub Pages / file://）
+window.__chesscraftServerReady = new Promise(function (resolve) {
+  var ac = new AbortController();
+  var to = setTimeout(function () { ac.abort(); }, 2000);
+  fetch('api/engine/status', { cache: 'no-store', signal: ac.signal })
+    .then(function (r) { return r.json(); })
+    .then(function (res) { clearTimeout(to); SERVER = !!(res && res.ok === true); resolve(SERVER); })
+    .catch(function () { clearTimeout(to); SERVER = false; resolve(false); });
+});
 var SP_MODE = /[?&]mode=selfplay/i.test(location.search);
+
+// ---- 静态模式预设库：内置预设（随部署的 preset/ 文件）+ 本浏览器「我的预设」（localStorage） ----
+var MY_PRESETS_KEY = 'chesscraft-mypresets-v1';
+var BUILTIN_PRESETS = [
+  { file: '棋匠-标准象棋.json', name: '标准象棋' },
+  { file: '棋匠-空白棋盘.json', name: '空白棋盘' }
+];
+function readMyPresets() {
+  try { var o = JSON.parse(localStorage.getItem(MY_PRESETS_KEY) || '{}'); return (o && typeof o === 'object') ? o : {}; } catch (e) { return {}; }
+}
+function writeMyPresets(o) { try { localStorage.setItem(MY_PRESETS_KEY, JSON.stringify(o)); } catch (e) { toast('本地保存失败'); } }
+
+// 静态模式 UI 调整：隐藏 Fairy-Stockfish 与联机入口（探测完成后、boot 之前调用一次）
+function applyStaticAdjustments() {
+  ['aiEngine', 'spEngine'].forEach(function (id) {
+    var sel = $(id);
+    if (!sel) return;
+    var opt = sel.querySelector('option[value="fsf"]');
+    if (opt) { opt.remove(); if (sel.value === 'fsf') sel.value = 'js'; }
+  });
+  var modeSel = $('mode');
+  if (modeSel) {
+    var no = modeSel.querySelector('option[value="net"]');
+    if (no) no.remove();
+    if (modeSel.value === 'net') modeSel.value = 'pvp';
+  }
+  var np = $('netPanel'); if (np) np.style.display = 'none';
+  var del = $('btnDelPreset'); if (del) del.style.display = '';
+  var note = $('presetNote'); if (note) note.textContent = '预设：内置 preset 文件 + 本浏览器「我的预设」';
+}
 
 function loadPresetList() {
   var sel = $('preset');
   if (!SERVER) {
-    sel.innerHTML = '<option value="">（请通过 启动棋匠.bat 打开页面以读取 preset 文件夹）</option>';
+    if (location.protocol === 'file:') {
+      sel.innerHTML = '<option value="">（请通过 启动棋匠.bat 打开页面以读取 preset 文件夹）</option>';
+      return;
+    }
+    // 静态托管模式：内置预设（随部署的 preset/ 文件）+ 本浏览器「我的预设」
+    var html = '';
+    BUILTIN_PRESETS.forEach(function (p) { html += '<option value="__file:' + p.file + '">' + p.name + '</option>'; });
+    var mine = readMyPresets();
+    Object.keys(mine).sort(function (a, b) { return a.localeCompare(b, 'zh'); }).forEach(function (n) {
+      html += '<option value="__user:' + n + '">' + n + '（我的预设）</option>';
+    });
+    sel.innerHTML = html || '<option value="">（无可用预设）</option>';
+    // 自动选中与当前规则同名的预设
+    var cur = (RULES.name || '').trim();
+    var target = null;
+    BUILTIN_PRESETS.forEach(function (p) { if (p.name === cur) target = '__file:' + p.file; });
+    Object.keys(mine).forEach(function (n) { if (n === cur) target = '__user:' + n; });
+    if (target) sel.value = target;
     return;
   }
   fetch('/api/presets').then(function(r) { return r.json(); }).then(function(res) {
@@ -3725,12 +3782,17 @@ function applyPreset() {
   var v = $('preset').value;
   if (!v) return;
   if (v.indexOf('__file:') === 0) {
-    fetch('/preset/' + encodeURIComponent(v.slice(7))).then(function(r) { return r.json(); })
+    fetch('preset/' + encodeURIComponent(v.slice(7))).then(function(r) { return r.json(); })
       .then(function(data) {
         if (!data || !data.name) { toast('预设加载失败'); return; }
         applyMergedRules(data, true);
       })
       .catch(function() { toast('预设加载失败（请确认 preset 文件存在）'); });
+  } else if (v.indexOf('__user:') === 0) {
+    var name = v.slice(7);
+    var mine = readMyPresets();
+    if (mine[name] && mine[name].name) applyMergedRules(mine[name], true);
+    else toast('本地预设加载失败（可能已被删除）');
   }
 }
 
@@ -3787,9 +3849,17 @@ function exportJSON() {
         loadPresetList();   // 刷新预设列表，不刷新页面
       })
       .catch(function() { downloadBlob(json, fileName, 'application/json'); toast('服务不可用，已改为浏览器下载：' + fileName); });
-  } else {
+  } else if (location.protocol === 'file:') {
     downloadBlob(json, fileName, 'application/json');
     toast('已下载：' + fileName + '。服务模式下将自动保存到 preset 文件夹。');
+  } else {
+    // 静态托管模式：存入本浏览器「我的预设」（同名覆盖）+ 下载备份
+    var mine = readMyPresets();
+    mine[rules.name] = rules;
+    writeMyPresets(mine);
+    downloadBlob(json, fileName, 'application/json');
+    toast('已保存到「我的预设」并下载：' + fileName + '（仅当前浏览器）');
+    loadPresetList();
   }
 }
 
@@ -3819,28 +3889,31 @@ function currentRulesJSON() {
 function setApStatus(text) { $('apStatus').textContent = text; }
 
 function oneClickSelfplay() {
-  var depth = Math.max(1, Math.min(5, parseInt($('diff').value, 10) || 4));
-  var rules = currentRulesJSON();
-  var name = rules.name || '变体';
-  setApStatus('正在检查预设…');
-  if (SERVER) {
-    fetch('/api/presets').then(function(r) { return r.json(); }).then(function(res) {
-      var target = '棋匠-' + name.replace(/[\\/:*?"<>|]/g, '').trim() + '.json';
-      var found = res && res.ok && res.presets.some(function(p) { return p.file === target; });
-      if (!found) {
-        setApStatus('请先点击「保存并导出预设」，将当前规则保存为 ' + target + ' 后才能自对弈');
-        alert('自对弈前需要先导出预设：请点击「导出预设」按钮，将当前规则保存为\n' + target);
-        return;
-      }
-      window.open('/index.html?mode=selfplay&preset=' + encodeURIComponent(target) + '&d=' + depth + ($('aiEngine') && $('aiEngine').value === 'fsf' ? '&engine=fsf' : ''));
-      setApStatus('已在新标签页打开自对弈（深度 ' + depth + '，局数在新标签页设置）');
-    }).catch(function() { setApStatus('预设检查失败（服务不可用）'); });
-  } else {
-    // file:// 回退：规则经 hash 随链接传入新标签页
-    var b64 = btoa(unescape(encodeURIComponent(JSON.stringify(rules))));
-    window.open('index.html?mode=selfplay#rules=' + b64);
-    setApStatus('已在新标签页打开自对弈（file:// 模式：规则随链接传入）');
-  }
+  // 等待服务探测完成再分流：服务模式走 preset 文件检查，静态/file 模式走 hash 传规则
+  window.__chesscraftServerReady.then(function () {
+    var depth = Math.max(1, Math.min(5, parseInt($('diff').value, 10) || 4));
+    var rules = currentRulesJSON();
+    var name = rules.name || '变体';
+    setApStatus('正在检查预设…');
+    if (SERVER) {
+      fetch('/api/presets').then(function(r) { return r.json(); }).then(function(res) {
+        var target = '棋匠-' + name.replace(/[\\/:*?"<>|]/g, '').trim() + '.json';
+        var found = res && res.ok && res.presets.some(function(p) { return p.file === target; });
+        if (!found) {
+          setApStatus('请先点击「保存并导出预设」，将当前规则保存为 ' + target + ' 后才能自对弈');
+          alert('自对弈前需要先导出预设：请点击「导出预设」按钮，将当前规则保存为\n' + target);
+          return;
+        }
+        window.open('index.html?mode=selfplay&preset=' + encodeURIComponent(target) + '&d=' + depth + ($('aiEngine') && $('aiEngine').value === 'fsf' ? '&engine=fsf' : ''));
+        setApStatus('已在新标签页打开自对弈（深度 ' + depth + '，局数在新标签页设置）');
+      }).catch(function() { setApStatus('预设检查失败（服务不可用）'); });
+    } else {
+      // file:// 与静态托管回退：规则经 hash 随链接传入新标签页
+      var b64 = btoa(unescape(encodeURIComponent(JSON.stringify(rules))));
+      window.open('index.html?mode=selfplay#rules=' + b64);
+      setApStatus('已在新标签页打开自对弈（file:// 模式：规则随链接传入）');
+    }
+  });
 }
 
 var spState = null;   // { stop, results, red, black, draw, totalPlies, maxPlies, minPlies, totalCaps, redCaps, blackCaps, dist }
@@ -4664,6 +4737,17 @@ $('btnHint').addEventListener('click', aiHint);
 boardEl.addEventListener('click', clickBoard);
 $('preset').addEventListener('change', applyPreset);
 $('btnExport').addEventListener('click', exportJSON);
+$('btnDelPreset').addEventListener('click', function () {
+  var v = $('preset').value;
+  if (v.indexOf('__user:') !== 0) { toast('仅可删除「我的预设」'); return; }
+  var name = v.slice(7);
+  if (!confirm('删除本地预设「' + name + '」？')) return;
+  var mine = readMyPresets();
+  delete mine[name];
+  writeMyPresets(mine);
+  loadPresetList();
+  toast('已删除本地预设：' + name);
+});
 $('btnStandalone').addEventListener('click', exportStandalone);
 $('btnImport').addEventListener('click', function() { $('fileImport').click(); });
 $('fileImport').addEventListener('change', function() {
@@ -4795,43 +4879,43 @@ $('btnSelftest').addEventListener('click', function() {
   alert('自检结果：' + pass + '/' + r.length + ' 通过' + (fails.length ? '\n失败项：\n' + fails.join('\n') : ''));
 });
 
-if (SP_MODE) {
-  selfplayBootstrap();
-} else {
-  // 初始默认加载经典象棋预设（保证 Fairy-Stockfish 引擎可用）；自定义规则通过预设列表手动选择
-  var boot = function(data) {
-    if (data && data.name) RULES = applyRules(deepMergeRules(DEFAULT_RULES, data));
-    applyBoardGeometry();
-    syncUIFromRules();
-    buildPalette();
-    loadPresetList();
-    refreshModeButtons();
-    newGame();
-    if (location.hash === '#config') toggleConfigMode();
-    // 本机 IP 提示（局域网对战入口；物理网卡优先，虚拟网卡标注）
-    if (SERVER) {
-      fetch('/api/ip').then(function(r) { return r.json(); }).then(function(res) {
-        if (res && res.ok && res.ip) {
-          var el = $('lanIp');
-          if (el) el.textContent = 'http://' + res.ip + ':8765';
-          var ipNote = $('lanIpList');
-          if (ipNote && res.list && res.list.length > 1) {
-            var cands = res.list.map(function(x) { return 'http://' + x.ip + ':8765' + (x.virt ? '（' + x.name + '，虚拟网卡）' : ''); });
-            ipNote.textContent = '其他地址：' + cands.join(' · ');
+// 等待服务探测完成再启动：静态模式先隐藏 FSF/联机入口，再按模式分流（统一相对路径加载默认预设）
+window.__chesscraftServerReady.then(function () {
+  if (!SERVER) applyStaticAdjustments();
+  if (SP_MODE) {
+    selfplayBootstrap();
+  } else {
+    // 初始默认加载经典象棋预设（保证 Fairy-Stockfish 引擎可用）；自定义规则通过预设列表手动选择
+    var boot = function(data) {
+      if (data && data.name) RULES = applyRules(deepMergeRules(DEFAULT_RULES, data));
+      applyBoardGeometry();
+      syncUIFromRules();
+      buildPalette();
+      loadPresetList();
+      refreshModeButtons();
+      newGame();
+      if (location.hash === '#config') toggleConfigMode();
+      // 本机 IP 提示（局域网对战入口；物理网卡优先，虚拟网卡标注）
+      if (SERVER) {
+        fetch('/api/ip').then(function(r) { return r.json(); }).then(function(res) {
+          if (res && res.ok && res.ip) {
+            var el = $('lanIp');
+            if (el) el.textContent = 'http://' + res.ip + ':8765';
+            var ipNote = $('lanIpList');
+            if (ipNote && res.list && res.list.length > 1) {
+              var cands = res.list.map(function(x) { return 'http://' + x.ip + ':8765' + (x.virt ? '（' + x.name + '，虚拟网卡）' : ''); });
+              ipNote.textContent = '其他地址：' + cands.join(' · ');
+            }
           }
-        }
-      }).catch(function() {});
-    }
-  };
-  if (SERVER) {
-    fetch('/preset/' + encodeURIComponent('棋匠-标准象棋.json'))
+        }).catch(function() {});
+      }
+    };
+    fetch('preset/' + encodeURIComponent('棋匠-标准象棋.json'))
       .then(function(r) { return r.json(); })
       .then(boot)
       .catch(function() { boot(null); });
-  } else {
-    boot(null);
   }
-}
+});
 
 window.addEventListener('load', function() {
   var r = selfTest();
@@ -5178,9 +5262,9 @@ window.addEventListener('load', function() {
     document.body.removeChild(t);
     netRender('房间号 ' + n.roomId + ' 已复制');
   });
-  if (!SP_MODE) netSessionRestore();   // 自对弈标签页不恢复联机会话
+  if (!SP_MODE) window.__chesscraftServerReady.then(function () { if (SERVER) netSessionRestore(); });   // 静态模式无服务，不恢复联机会话
   window.addEventListener('beforeunload', function () {
-    if (state.net) { state.net.leaving = true; netPost('/api/room/leave', { roomId: state.net.roomId, side: state.net.side }); }
+    if (state.net && SERVER) { state.net.leaving = true; netPost('/api/room/leave', { roomId: state.net.roomId, side: state.net.side }); }
   });
 })();
 </script>
