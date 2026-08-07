@@ -1,0 +1,24 @@
+# ============================================================
+# 棋匠 (ChessCraft) - Git 忽略规则
+# ============================================================
+
+# 引擎二进制（方案 A：不入库）
+# 请从 Fairy-Stockfish 官方 Releases 下载，见 README.md「引擎安装」
+engine/
+
+# 独立版导出目录（运行时由 server.js 自动生成）
+game/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# 系统文件
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# 编辑器
+.vscode/
+.idea/
