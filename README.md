@@ -1,8 +1,8 @@
 # 棋匠 (ChessCraft)
 
-一个本地运行的中国象棋变体创作与对战平台：可视化编辑自定义棋规，用自带 JS 引擎（可选 Fairy-Stockfish）对弈，局域网内随时联机。
+一个本地运行的中国象棋变体创作与对战平台：可视化编辑自定义棋规，用自带 JS 引擎（可选 Fairy-Stockfish）对弈，支持局域网内联机。
 
-> 仅需 Node.js（无任何 npm 包），启动即用。
+> 仅需 Node.js环境，启动即用。
 
 ## ✨ 功能
 
@@ -10,7 +10,7 @@
 - **双引擎对弈** — 默认内置 JS AI（稳健 / 平衡 / 随机三种风格），开箱即用；可选对接 Fairy-Stockfish 获得更强棋力，自动把规则 JSON 转换为引擎变体定义，无法完全映射的棋规自动回退到内置 AI
 - **联机对战** — 创建房间即可对战，支持局域网内设备访问页面加入
 - **预设系统** — 内置标准象棋等预设，一键保存 / 加载 / 分享规则
-- **独立版导出** — 把任一自定义变体导出为单文件 HTML，脱离服务器即可分享
+- **独立版导出** — 把任一自定义变体导出为单文件 HTML
 - **自对弈报告** — 引擎自对弈并输出报告，便于验证平衡
 
 ## 🚀 快速开始
@@ -29,7 +29,7 @@ node server.js
 
 ### Fairy-Stockfish 引擎安装（可选）
 
-AI 对弈开箱即用（内置 JS 引擎）。Fairy-Stockfish 是可选增强引擎：棋力更强，但仅能映射部分棋规，无法完全映射的走法会自动回退到内置 AI。如需安装：
+AI 对弈开箱即用（内置 JS 引擎）。Fairy-Stockfish 是可选增强引擎，棋力更强，但仅能映射部分棋规，无法完全映射的走法会自动回退到内置 AI。如需安装：
 
 1. 前往 [Fairy-Stockfish 官方 Releases](https://github.com/fairy-stockfish/Fairy-Stockfish/releases) 下载
    **`fairy-stockfish-largeboard_x86-64.exe`**（Windows 64 位）
