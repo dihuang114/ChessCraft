@@ -38,6 +38,18 @@ AI 对弈开箱即用（内置 JS 引擎）。Fairy-Stockfish 是可选增强引
 2. 将文件放入项目的 `engine/` 目录
 3. 重启服务即可使用此引擎对弈
 
+## 🌐 在线版（无需安装 Node）
+
+在线版部署于 <https://dihuang.vip/tools/chesscraft/>，同一份 `index.html` 启动时自动探测本地服务：
+
+- **有本地服务**（`node server.js`）→ 服务模式：完整功能（含 Fairy-Stockfish、联机对战）
+- **纯静态托管**（GitHub Pages / file://）→ 静态模式：
+  - ✅ 内置预设加载、JS AI 对弈（稳健 / 平衡 / 随机）、自对弈、独立版导出
+  - ✅ 保存预设 → 存入本浏览器「我的预设」（localStorage）+ 下载备份，可加载 / 删除
+  - ❌ 联机对战仅本地版可用；Fairy-Stockfish 需本地进程，在线版不可用（选项自动隐藏）
+
+**重新部署**：修改 `index.html` 或 `preset/` 后，将 `index.html` 与 `preset/` 目录复制到站点 `_static/tools/chesscraft/`，再运行站点的 `updateweb.bat`。
+
 ## 📁 目录结构
 
 ```

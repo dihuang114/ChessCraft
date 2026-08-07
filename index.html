@@ -3959,7 +3959,7 @@ function spLoadRules() {
   };
   var presetFile = q.get('preset');
   if (presetFile) {
-    fetch('/preset/' + encodeURIComponent(presetFile)).then(function(r) { return r.json(); })
+    fetch('preset/' + encodeURIComponent(presetFile)).then(function(r) { return r.json(); })
       .then(function(data) { if (data && data.name) start(data); else fromHash(); })
       .catch(fromHash);
   } else {
