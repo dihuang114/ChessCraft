@@ -42,13 +42,13 @@ AI 对弈开箱即用（内置 JS 引擎）。Fairy-Stockfish 是可选增强引
 
 在线版部署于 <https://dihuang.vip/tools/chesscraft/>，启动时自动探测本地服务：
 
+**如有本地服务**（`node server.js`）：完整功能（含 Fairy-Stockfish、联机对战）
+
 ✅ 内置预设加载、JS AI 对弈（稳健 / 平衡 / 随机）、自对弈、独立版导出
 
 ✅ 保存预设 → 存入本浏览器「我的预设」（localStorage）+ 下载备份，可加载 / 删除
 
-❌ 联机对战仅本地版可用；Fairy-Stockfish 需本地进程，在线版不可用（选项自动隐藏）
-
-**如有本地服务**（`node server.js`）：完整功能（含 Fairy-Stockfish、联机对战）
+❌ 联机对战仅本地版可用
 
 ## 📁 目录结构
 
