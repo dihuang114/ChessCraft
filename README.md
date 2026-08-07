@@ -27,7 +27,7 @@
 node server.js
 ```
 
-然后访问 http://localhost:8765（保持终端窗口开启；关闭即停止服务）。
+然后访问 http://localhost:8765  （保持终端窗口开启；关闭即停止服务）。
 
 ### Fairy-Stockfish 引擎安装（可选）
 
