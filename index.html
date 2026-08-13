@@ -1204,6 +1204,7 @@ function applyPat(pat, b, r, c, s, captureOnly, add) {
         if (k > 0 && pat.block && b[r + dv[0] * k][c + dv[1] * k]) break;   // 象眼
         var q3 = b[tr3][tc3];
         if (q3) {
+          if (pat.block && k < pat.dist - 1) break;   // 阻断：中间格（象眼）上的子不可吃，整条走法被阻断
           if (captureOnly && q3.s !== s) add(tr3, tc3, stay);
           break;
         }
@@ -1407,7 +1408,8 @@ function pieceAttacks(b, sr, sc, tr, tc) {
             && steps - lastMid === (pat.land || 1)) hit = true;
       } else {
         var jp = (pat.jump !== undefined) ? pat.jump : (pat.screen ? 1 : 0);
-        if (mids === jp) hit = true;
+        if (pat.block && typeof pat.dist === 'number' && steps < pat.dist) { /* 阻断：中间格（象眼）不可吃 */ }
+        else if (mids === jp) hit = true;
       }
     }
     if (hit) attacked = true;

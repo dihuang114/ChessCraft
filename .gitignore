@@ -9,6 +9,9 @@ engine/
 # 独立版导出目录（运行时由 server.js 自动生成）
 game/
 
+# 本地私有预设（不入库）
+preset/棋匠-地荒象棋.json
+
 # Node
 node_modules/
 npm-debug.log*
