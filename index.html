@@ -1699,10 +1699,12 @@ function newRepEntry(wasChk, mover) {
 }
 function recordPosition(rep, board, sideToMove, wasChk, wasChase) {
   var k = positionKey(board, sideToMove);
-  var e = rep[k] || newRepEntry(false, -1);
+  var e = rep[k];
+  if (e) e.n++;                       // 已出现过才递增；首次出现由 newRepEntry 记 1 次
+  else e = newRepEntry(false, -1);    // 首次出现（含初始局面种子）即第 1 次
   e.prevChk = e.chk; e.prevChkSide = e.chkSide;
   e.prevChase = e.chase; e.prevChaseSide = e.chaseSide;
-  e.n++; e.chk = !!wasChk; e.chkSide = 1 - sideToMove;
+  e.chk = !!wasChk; e.chkSide = 1 - sideToMove;
   e.chase = !!wasChase; e.chaseSide = 1 - sideToMove;
   rep[k] = e;
 }
@@ -1832,17 +1834,21 @@ function seeEval(b, mv) {
   return total;
 }
 
-function orderMoves(moves) {
+// 历史启发：Beta 截断的着法加分，按"吃子价值 → 历史分"排序，显著加速剪枝
+var HIST = [[], []];
+function histKey(mv) { return (mv.from.r * 26 + mv.from.c) * 676 + mv.to.r * 26 + mv.to.c; }
+function orderMoves(moves, side) {
   return moves.slice().sort(function(a, b) {
     var va = a.cap ? pieceValue(a.cap.t) : 0;
     var vb = b.cap ? pieceValue(b.cap.t) : 0;
-    return vb - va;
+    if (va !== vb) return vb - va;
+    return (HIST[side][histKey(b)] || 0) - (HIST[side][histKey(a)] || 0);
   });
 }
 
 function negamax(b, side, depth, alpha, beta, deadline) {
   if (Date.now() > deadline) throw ERR_TIMEOUT;
-  var moves = orderMoves(allLegalMoves(b, side));
+  var moves = orderMoves(allLegalMoves(b, side), side);
   if (moves.length === 0) {
     if (isInCheck(b, side)) return -(MATE - depth * 100);                    // 被将死（越快越好）
     return RULES.global.stalemateIsLoss ? -(MATE - depth * 100) : 0;         // 困毙：按规则判负或判和
@@ -1863,7 +1869,7 @@ function negamax(b, side, depth, alpha, beta, deadline) {
     }
     if (v > best) best = v;
     if (best > alpha) alpha = best;
-    if (alpha >= beta) break;
+    if (alpha >= beta) { HIST[side][histKey(mv)] = (HIST[side][histKey(mv)] || 0) + depth * depth; break; }
   }
   return best;
 }
@@ -1945,8 +1951,9 @@ function bookMove(b, side, usable) {
 }
 
 function aiMove(b, side, depth, timeLimitMs, repeatCounts, style) {
-  var moves = orderMoves(allLegalMoves(b, side));
+  var moves = orderMoves(allLegalMoves(b, side), side);
   if (!moves.length) return null;
+  HIST = [[], []];   // 每局搜索重置历史启发表
   var deadline = Date.now() + (timeLimitMs || 2000);
   var usable = moves;
   if (repeatCounts && repeatCounts.size) {
@@ -1968,16 +1975,24 @@ function aiMove(b, side, depth, timeLimitMs, repeatCounts, style) {
     var bm = bookMove(b, side, usable);
     if (bm) return bm;
   }
-  var best = null, bestVal = -Infinity;
+  var best = null, bestVal = -Infinity, pvMove = null;   // pvMove: 上一迭代最佳着法（根层先验，加速剪枝）
   var tStart = Date.now();
   for (var d = 1; d <= depthMax; d++) {
     var cur = null, curVal = -Infinity, alpha = -Infinity, ties = [];
-    // 每层独立时限（用剩余总时限）：前几层快速完成后高层有预算；总时限到即截断，不卡顿
+    // 根层 PV 优先：上一迭代最佳着法先评估，alpha 快速上升 → 其余着法大幅剪枝
+    var order = usable;
+    if (pvMove) {
+      order = usable.filter(function(m) { return m !== pvMove; });
+      order.unshift(pvMove);
+    }
+    // 每层独立时限（用剩余总时限）：深层拿全部剩余预算；完不成会被丢弃，回退上一层完整结果
     var remain = (timeLimitMs || 2000) - (Date.now() - tStart);
-    var dLine = Date.now() + Math.max(30, Math.min(remain, 150 + d * 300));
+    var dLine = Date.now() + Math.max(30, remain);
+    var completed = false;
     try {
-      for (var j = 0; j < usable.length; j++) {
-        var mv = usable[j];
+      for (var j = 0; j < order.length; j++) {
+        if (Date.now() > dLine) break;             // 预算已尽：本层视为未完成，不采纳残缺结果
+        var mv = order[j];
         var cap = makeMove(b, mv); PLIES++;
         var v;
         try {
@@ -1989,12 +2004,14 @@ function aiMove(b, side, depth, timeLimitMs, repeatCounts, style) {
         else if (v === curVal) { ties.push(mv); }
         if (v > alpha) alpha = v;
       }
+      completed = true;
     } catch (e) {
-      if (e !== ERR_TIMEOUT) throw e;   // 超时：保留上一迭代结果
+      if (e !== ERR_TIMEOUT) throw e;   // 超时：本层结果不完整，丢弃（保留上一完整迭代的结果）
     }
-    if (cur) {
+    if (completed && cur) {
       best = cur; bestVal = curVal;
       if (ties.length > 1) best = ties[(Date.now() + d * 7919) % ties.length | 0];   // 同分随机
+      pvMove = best;
     }
     if (Date.now() - tStart > (timeLimitMs || 2000)) break;   // 总时限强制截断
   }
