@@ -1450,15 +1450,138 @@ function isInCheck(b, s) {
   return false;
 }
 
-function legalMoves(b, r, c) {
+// 王安全免检信息：非将军时，除"王自身着法""牵制子着法"与"危险落点着法"外，其余着法不可能暴露王，
+// 可免去逐一验王安全（提速 ~10 倍）。
+// 牵制子 = 移开后王会被攻击的己方子；危险落点 = 落子后恰好成为敌"隔 n 子/跳吃"子攻击王的支点。
+// 计算超预算时返回 pinned=null，调用方回退全量验证（正确性不受影响）。
+function kingSafetyInfo(b, side) {
+  var k = findKing(b, side);
+  var pinned = {};
+  var danger = {};
+  var inCheck = isInCheck(b, side);
+  if (k && !inCheck) {
+    var o = 1 - side;
+    var bd = RULES.board || DEFAULT_RULES.board;
+    var budget = 150;   // 免检计算预算（配对测试次数），超限回退全量验证
+    // 1) 牵制子：每条射线上，每个敌子 A 与其王侧每个己子 X 配对——移开 X 后 A 可吃王 → X 被牵制
+    //    （覆盖直线/隔子炮架/跳吃/象眼；照面单独处理）
+    var rays = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+    for (var ri = 0; ri < 8 && budget > 0; ri++) {
+      var dr = rays[ri][0], dc = rays[ri][1];
+      var line = [];
+      var rr = k.r + dr, cc = k.c + dc;
+      while (inB(rr, cc) && line.length < 6) {
+        var q = b[rr][cc];
+        if (q) line.push({ r: rr, c: cc, s: q.s, t: q.t });
+        rr += dr; cc += dc;
+      }
+      for (var ai = 0; ai < line.length && budget > 0; ai++) {
+        var A = line[ai];
+        if (A.s !== o) continue;
+        if (A.t === K) {
+          if (RULES.global.flyingGeneral && (dr === 0 || dc === 0) && ai === 1) {
+            pinned[line[0].r + ',' + line[0].c] = true;   // 照面：恰一个间隔子即被牵制
+          }
+          continue;
+        }
+        for (var xi = 0; xi < ai && budget > 0; xi++) {
+          if (line[xi].s !== side || pinned[line[xi].r + ',' + line[xi].c]) continue;
+          budget--;
+          var saved = b[line[xi].r][line[xi].c];
+          b[line[xi].r][line[xi].c] = null;
+          if (pieceAttacks(b, A.r, A.c, k.r, k.c)) pinned[line[xi].r + ',' + line[xi].c] = true;
+          b[line[xi].r][line[xi].c] = saved;
+        }
+      }
+    }
+    // 2) 蹩马腿牵制：敌马(带腿)攻击点上是王时，腿位上的己子被牵制（移开腿即露王）
+    for (var r2 = 0; r2 < bd.rows && budget > 0; r2++) for (var c2 = 0; c2 < bd.cols; c2++) {
+      var e2 = b[r2][c2];
+      if (!e2 || e2.s !== o) continue;
+      var cfg2 = pieceCfg(e2.t, e2.s);
+      if (!cfg2) continue;
+      var hasLeg = patsOf(pawnCrossed(e2.s, r2) ? cfg2.capA : cfg2.capB)
+        .some(function(p2) { return p2.style === 'knight' && p2.block; });
+      if (!hasLeg) continue;
+      for (var ki = 0; ki < 8 && budget > 0; ki++) {
+        var tr = r2 + KNIGHT[ki][0], tc = c2 + KNIGHT[ki][1];
+        if (tr === k.r && tc === k.c) {
+          var legR = r2, legC = c2;
+          if (Math.abs(KNIGHT[ki][0]) === 2) legR = r2 + (KNIGHT[ki][0] > 0 ? 1 : -1);
+          if (Math.abs(KNIGHT[ki][1]) === 2) legC = c2 + (KNIGHT[ki][1] > 0 ? 1 : -1);
+          if (inB(legR, legC) && b[legR][legC] && b[legR][legC].s === side) {
+            pinned[legR + ',' + legC] = true;
+            budget--;
+          }
+        }
+      }
+    }
+    if (budget > 0) {
+      // 3) 危险落点：
+      //    a) 敌"隔 n 子"直线子与王之间恰有 n-1 子时，其间所有空格皆危险（落子即成炮架）
+      //    b) 敌"跳吃"子射线上的连续空格，若王恰在其 land 步外，则该格危险（落子即被跳过吃王）
+      for (var r = 0; r < bd.rows; r++) for (var c = 0; c < bd.cols; c++) {
+        var e = b[r][c];
+        if (!e || e.s !== o) continue;
+        var cfg = pieceCfg(e.t, e.s);
+        if (!cfg) continue;
+        var capPats = patsOf(pawnCrossed(e.s, r) ? cfg.capA : cfg.capB);
+        for (var pi = 0; pi < capPats.length; pi++) {
+          var pat = capPats[pi];
+          var J = (pat.jump !== undefined) ? pat.jump : (pat.screen ? 1 : 0);
+          if (pat.style !== 'line') continue;
+          for (var di = 0; di < pat.dirs.length; di++) {
+            var v = dirVec(e.s, pat.dirs[di]);
+            if (pat.hop) {
+              var rr3 = r + v[0], cc3 = c + v[1];
+              while (inB(rr3, cc3)) {
+                if (b[rr3][cc3]) break;   // 首子之前的连续空格才有意义
+                var kr = rr3 + v[0] * (pat.land || 1), kc = cc3 + v[1] * (pat.land || 1);
+                if (inB(kr, kc) && b[kr][kc] && b[kr][kc].t === K && b[kr][kc].s === side) danger[rr3 + ',' + cc3] = true;
+                rr3 += v[0]; cc3 += v[1];
+              }
+            } else if (J > 0) {
+              var rr2 = r + v[0], cc2 = c + v[1], cnt = 0;
+              var empties = [];
+              while (inB(rr2, cc2)) {
+                var pp = b[rr2][cc2];
+                if (pp) {
+                  if (pp.t === K && pp.s === side) {
+                    if (cnt === J - 1) {
+                      for (var ei = 0; ei < empties.length; ei++) danger[empties[ei][0] + ',' + empties[ei][1]] = true;
+                    }
+                    break;
+                  }
+                  cnt++;
+                  if (cnt > J) break;
+                } else {
+                  empties.push([rr2, cc2]);
+                }
+                rr2 += v[0]; cc2 += v[1];
+              }
+            }
+          }
+        }
+      }
+    } else {
+      pinned = null;   // 预算超限：回退全量验证
+    }
+  }
+  return { inCheck: inCheck, pinned: pinned, danger: danger };
+}
+
+function legalMoves(b, r, c, info) {
   var p = b[r][c];
   if (!p) return [];
   var list = pseudoMoves(b, r, c);
   var res = [];
+  // 免检优化：info 由 allLegalMoves 预计算；非将军时，王与牵制子以外的普通着法不会暴露王
+  var skip = !!info && info.pinned !== null && !info.inCheck && p.t !== K;
+  var pinnedKey = r + ',' + c;
   for (var i = 0; i < list.length; i++) {
     var t = list[i];
     var victim, safe;
-    if (t.hop) {                                  // 跳吃/越落：被吃子在 hop 格，落点为空
+    if (t.hop) {                                  // 跳吃/越落：移除被越子可能暴露王，始终验证
       victim = b[t.hop.r][t.hop.c] || null;
       b[t.hop.r][t.hop.c] = null;
       b[r][c] = null;
@@ -1469,9 +1592,11 @@ function legalMoves(b, r, c) {
       b[t.r][t.c] = null;
     } else if (t.stay) {
       victim = b[t.r][t.c];
-      b[t.r][t.c] = null;                       // 原地吃：只移除被吃子
+      b[t.r][t.c] = null;                       // 原地吃：只移除被吃子（可能暴露王），始终验证
       safe = !isInCheck(b, p.s);
       b[t.r][t.c] = victim;
+    } else if (skip && !info.pinned[pinnedKey] && !info.danger[t.r + ',' + t.c]) {
+      safe = true;                              // 免检：非王、非牵制子、非危险落点的普通着法合法
     } else {
       victim = b[t.r][t.c];
       b[r][c] = null;
@@ -1495,11 +1620,12 @@ function legalMoves(b, r, c) {
 
 function allLegalMoves(b, side) {
   var res = [];
+  var info = kingSafetyInfo(b, side);   // 免检信息：本节点所有子共用
   var bd = RULES.board || DEFAULT_RULES.board;
   for (var r = 0; r < bd.rows; r++) for (var c = 0; c < bd.cols; c++) {
     var p = b[r][c];
     if (!p || p.s !== side) continue;
-    var list = legalMoves(b, r, c);
+    var list = legalMoves(b, r, c, info);
     for (var i = 0; i < list.length; i++) {
       var t = list[i];
       if (t.chain) {
@@ -1518,6 +1644,59 @@ function allLegalMoves(b, side) {
     res = res.filter(function(m) { return m.cap || m.steps; });
   }
   return res;
+}
+
+// 仅吃子着法（静止搜索用）：复用 allLegalMoves 的免检优化
+function genCaptures(b, side, info) {
+  var res = [];
+  var bd = RULES.board || DEFAULT_RULES.board;
+  for (var r = 0; r < bd.rows; r++) for (var c = 0; c < bd.cols; c++) {
+    var p = b[r][c];
+    if (!p || p.s !== side) continue;
+    var list = legalMoves(b, r, c, info);
+    for (var i = 0; i < list.length; i++) {
+      var t = list[i];
+      var cap = t.hop ? (b[t.hop.r][t.hop.c] || null) : (b[t.r][t.c] || null);
+      if (!cap) continue;
+      var mv2 = { from: { r: r, c: c }, to: { r: t.r, c: t.c }, piece: p, cap: cap };
+      if (t.stay) mv2.stay = true;
+      if (t.hop) mv2.hop = t.hop;
+      res.push(mv2);
+    }
+  }
+  return res;
+}
+
+// 静止搜索：叶子层继续搜索吃子着法，避免"悬空大子"在静态评估中视而不见
+// qd：静止搜索深度（将死分随深度衰减，偏向速胜）；无吃子时补查将死/困毙
+function quiescence(b, side, alpha, beta, deadline, qd) {
+  if (Date.now() > deadline) throw ERR_TIMEOUT;
+  var stand = side === RED ? evaluate(b) : -evaluate(b);
+  if (stand >= beta) return stand;
+  if (stand > alpha) alpha = stand;
+  var info = kingSafetyInfo(b, side);
+  var moves = orderMoves(genCaptures(b, side, info), side);
+  if (!moves.length) {
+    var all = allLegalMoves(b, side);   // 无吃子：查将死/困毙（若完全无合法着法）
+    if (!all.length) {
+      if (isInCheck(b, side)) return -(MATE - qd * 100);
+      return RULES.global.stalemateIsLoss ? -(MATE - qd * 100) : 0;
+    }
+    return alpha;
+  }
+  for (var i = 0; i < moves.length; i++) {
+    var mv = moves[i];
+    var cap = makeMove(b, mv); PLIES++;
+    var v;
+    try {
+      v = -quiescence(b, 1 - side, -beta, -alpha, deadline, qd + 1);
+    } finally {
+      PLIES--; unmake(b, mv, cap);   // 超时抛出也必须撤销
+    }
+    if (v > alpha) alpha = v;
+    if (alpha >= beta) break;
+  }
+  return alpha;
 }
 
 function makeMove(b, mv) {
@@ -1788,11 +1967,11 @@ function evaluate(b) {
                    + ((bd.cols - 1 - Math.abs(c - Math.floor((bd.cols - 1) / 2))) * 1.5)
                    + (c === Math.floor((bd.cols - 1) / 2) ? 15 : 0);   // 过河兵价值更高；中路微偏；中兵保护分
     else if (q.t === H || q.t === C) v += ((bd.cols - 1) - Math.abs(c - Math.floor((bd.cols - 1) / 2))) * 2;   // 中路微偏
-    // 开局阵型（前 10 半着）：马在底线 +60、炮在炮位 +20——开局出子价值，抑制"开局炮打马"等盲目兑子
+    // 开局出子鼓励（前 10 半着）：马/炮离开初始位置即视为出动——奖励发展，替代旧"留位惩罚"
+    // （旧逻辑惩罚棋子离位，导致 AI 开局只会拱兵不动大子）
     if (PLIES < 10) {
-      if (q.t === H && r === (q.s === RED ? bd.rows - 1 : 0)) v += 60;
-      if (q.t === C && r === (q.s === RED ? bd.rows - 3 : 2)) v += 20;
-      else if (q.t === C && r !== (q.s === RED ? bd.rows - 3 : 2)) v -= 25;
+      if (q.t === H && r !== (q.s === RED ? bd.rows - 1 : 0)) v += 40;
+      if (q.t === C && r !== (q.s === RED ? bd.rows - 3 : 2)) v += 15;
     }
     score += q.s === RED ? v : -v;
   }
@@ -1848,14 +2027,11 @@ function orderMoves(moves, side) {
 
 function negamax(b, side, depth, alpha, beta, deadline) {
   if (Date.now() > deadline) throw ERR_TIMEOUT;
+  if (depth <= 0) return quiescence(b, side, alpha, beta, deadline, 0);   // 叶子层直接进静止搜索
   var moves = orderMoves(allLegalMoves(b, side), side);
   if (moves.length === 0) {
     if (isInCheck(b, side)) return -(MATE - depth * 100);                    // 被将死（越快越好）
     return RULES.global.stalemateIsLoss ? -(MATE - depth * 100) : 0;         // 困毙：按规则判负或判和
-  }
-  if (depth <= 0) {
-    var ev = evaluate(b);
-    return side === RED ? ev : -ev;
   }
   var best = -Infinity;
   for (var i = 0; i < moves.length; i++) {
@@ -1996,12 +2172,14 @@ function aiMove(b, side, depth, timeLimitMs, repeatCounts, style) {
         var cap = makeMove(b, mv); PLIES++;
         var v;
         try {
-          v = -negamax(b, 1 - side, d - 1, -Infinity, alpha, dLine);
+          // 子窗口 = (-Inf, -alpha)：v=-子值，故 v>alpha（可选）⟺ 子值<-alpha（fail-low 精确）；
+          // fail-high 的值 v≤alpha 不会被误选。首着 alpha=-Inf → 全窗口精确值。
+          v = -negamax(b, 1 - side, d - 1, -Infinity, -alpha, dLine);
         } finally {
           PLIES--; unmake(b, mv, cap);   // 超时抛出也必须撤销
         }
         if (v > curVal) { curVal = v; cur = mv; ties = [mv]; }
-        else if (v === curVal) { ties.push(mv); }
+        else if (v === curVal && v > alpha) { ties.push(mv); }   // 仅精确值（fail-low）才算平局；边界值不参与随机
         if (v > alpha) alpha = v;
       }
       completed = true;
