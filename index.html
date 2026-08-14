@@ -711,14 +711,22 @@ function validatePat(p) {
 }
 function validatePiece(cfg, base) {
   var b = base || { moveB: null, capB: null, moveA: null, capA: null };
+  var moveB = validatePat((cfg && cfg.moveB) || b.moveB);
+  var capB = validatePat((cfg && cfg.capB) || b.capB);
+  var diffPhase = !!(cfg && cfg.diffPhase);
+  // 过河前后规则不同未开启时强制同步（与编辑器保存一致），防止旧数据残留不一致的过河后规则
+  var moveA = diffPhase ? validatePat((cfg && cfg.moveA) || b.moveA)
+                        : moveB.map(function(p) { return JSON.parse(JSON.stringify(p)); });
+  var capA = diffPhase ? validatePat((cfg && cfg.capA) || b.capA)
+                       : capB.map(function(p) { return JSON.parse(JSON.stringify(p)); });
   return {
     name: (cfg && typeof cfg.name === 'string' && cfg.name.trim()) ? cfg.name.trim().slice(0, 4) : '?',
     value: (cfg && typeof cfg.value === 'number' && isFinite(cfg.value)) ? Math.max(0, Math.min(100000, Math.round(cfg.value))) : 100,
     inherit: (cfg && typeof cfg.inherit === 'string') ? cfg.inherit : '',
-    moveB: validatePat((cfg && cfg.moveB) || b.moveB),
-    capB: validatePat((cfg && cfg.capB) || b.capB),
-    moveA: validatePat((cfg && cfg.moveA) || b.moveA),
-    capA: validatePat((cfg && cfg.capA) || b.capA),
+    moveB: moveB,
+    capB: capB,
+    moveA: moveA,
+    capA: capA,
     canCrossRiver: !!(cfg && cfg.canCrossRiver),
     canEnterPalace: !!(cfg && cfg.canEnterPalace),
     canLeavePalace: !!(cfg && cfg.canLeavePalace),
@@ -730,7 +738,7 @@ function validatePiece(cfg, base) {
     canCaptureA: cfg ? (cfg.canCaptureA !== false && cfg.canCapture !== false) : true,
     stayCrossed: !!(cfg && cfg.stayCrossed),
     chainCapture: !!(cfg && cfg.chainCapture),
-    diffPhase: !!(cfg && cfg.diffPhase),
+    diffPhase: diffPhase,
     diffCap: !!(cfg && cfg.diffCap),
     diffFirst: !!(cfg && cfg.diffFirst),
     moveF: validatePat(cfg && cfg.moveF),   // 前x步专用走法（首x步规则不同）
