@@ -1977,6 +1977,9 @@ function evaluate(b) {
   }
   if (!hasK[RED]) return -MATE;
   if (!hasK[BLACK]) return MATE;
+  // 风格化噪声：solid=0 完全确定 | balanced≈±20 轻微变化 | random≈±150 强变化。
+  // 幅度远小于兵值(110)，只影响近似等价着法的选择，不会导致送大子。
+  if (EVAL_NOISE > 0) score += (Math.random() * 2 - 1) * EVAL_NOISE;
   return score;
 }
 
@@ -2015,6 +2018,7 @@ function seeEval(b, mv) {
 
 // 历史启发：Beta 截断的着法加分，按"吃子价值 → 历史分"排序，显著加速剪枝
 var HIST = [[], []];
+var EVAL_NOISE = 0;   // 风格化评估噪声（solid=0 / balanced=20 / random=150），每次搜索由 aiMove 按风格设置
 function histKey(mv) { return (mv.from.r * 26 + mv.from.c) * 676 + mv.to.r * 26 + mv.to.c; }
 function orderMoves(moves, side) {
   return moves.slice().sort(function(a, b) {
@@ -2127,6 +2131,8 @@ function bookMove(b, side, usable) {
 }
 
 function aiMove(b, side, depth, timeLimitMs, repeatCounts, style) {
+  // 风格：solid=完全确定性 | balanced=轻度随机（≈±20）| random=强随机（≈±150）
+  EVAL_NOISE = style === 'random' ? 150 : (style === 'solid' ? 0 : 20);
   var moves = orderMoves(allLegalMoves(b, side), side);
   if (!moves.length) return null;
   HIST = [[], []];   // 每局搜索重置历史启发表
